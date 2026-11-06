@@ -28,12 +28,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -53,6 +55,7 @@ import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -71,6 +74,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -146,7 +150,7 @@ private fun MainAppScreen() {
         }
     }
 
-    fun toggleFavorite(team: Team, sport: Sport, competition: Competition) {
+    fun addFavoriteWithAlias(team: Team, sport: Sport, competition: Competition, alias: String?) {
         val favorite = Favorite(
             sportId = sport.id,
             sportName = sport.name,
@@ -154,20 +158,25 @@ private fun MainAppScreen() {
             competitionName = competition.name,
             teamId = team.id,
             teamName = team.name,
-            shieldUrl = team.shieldUrl
+            shieldUrl = team.shieldUrl,
+            alias = alias
         )
-        val exists = favorites.any { it.sameTeam(favorite) }
-        val updated = if (exists) {
-            favorites.filterNot { it.sameTeam(favorite) }
-        } else {
-            favorites + favorite
+        val updated = favorites.filterNot { it.sameTeam(favorite) } + favorite
+        try {
+            favoritesStore.save(updated)
+            favorites = updated
+            activeCalendarTeamKey = "${favorite.sportId}:${favorite.competitionId}:${favorite.teamId}"
+        } catch (_: Exception) {
+        }
+    }
+
+    fun updateFavoriteAlias(favorite: Favorite, newAlias: String?) {
+        val updated = favorites.map {
+            if (it.sameTeam(favorite)) it.copy(alias = newAlias) else it
         }
         try {
             favoritesStore.save(updated)
             favorites = updated
-            if (!exists) {
-                activeCalendarTeamKey = "${favorite.sportId}:${favorite.competitionId}:${favorite.teamId}"
-            }
         } catch (_: Exception) {
         }
     }
@@ -186,11 +195,37 @@ private fun MainAppScreen() {
         }
     }
 
+    val activeFavorite = favorites.find { "${it.sportId}:${it.competitionId}:${it.teamId}" == activeCalendarTeamKey }
+        ?: favorites.firstOrNull()
+
     Scaffold(
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text("EC Madrid Deportes", fontWeight = FontWeight.Bold) },
+                    title = {
+                        if (selectedTabIndex == 1 && activeFavorite != null) {
+                            // Top bar shows the team shield on the left of the alias!
+                            val calendarTitle = activeFavorite.calendarDisplayName
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                TeamShield(
+                                    shieldUrl = activeFavorite.shieldUrl,
+                                    teamName = activeFavorite.teamName,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Text(
+                                    text = calendarTitle,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        } else {
+                            Text("EC Madrid Deportes", fontWeight = FontWeight.Bold)
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
@@ -226,7 +261,9 @@ private fun MainAppScreen() {
                 TeamsSelectionTab(
                     repository = repository,
                     favorites = favorites,
-                    onToggleFavorite = ::toggleFavorite,
+                    onAddFavorite = ::addFavoriteWithAlias,
+                    onUpdateAlias = ::updateFavoriteAlias,
+                    onRemoveFavorite = ::removeFavorite,
                     onGoToCalendar = { fav ->
                         activeCalendarTeamKey = "${fav.sportId}:${fav.competitionId}:${fav.teamId}"
                         selectedTabIndex = 1
@@ -247,6 +284,7 @@ private fun MainAppScreen() {
                         }
                     },
                     onRefreshCalendar = { fav -> refreshCalendar(fav, force = true) },
+                    onUpdateAlias = ::updateFavoriteAlias,
                     onRemoveFavorite = ::removeFavorite,
                     onGoToSelection = { selectedTabIndex = 0 }
                 )
@@ -259,7 +297,9 @@ private fun MainAppScreen() {
 private fun TeamsSelectionTab(
     repository: CalendarRepository,
     favorites: List<Favorite>,
-    onToggleFavorite: (Team, Sport, Competition) -> Unit,
+    onAddFavorite: (Team, Sport, Competition, String?) -> Unit,
+    onUpdateAlias: (Favorite, String?) -> Unit,
+    onRemoveFavorite: (Favorite) -> Unit,
     onGoToCalendar: (Favorite) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -274,6 +314,10 @@ private fun TeamsSelectionTab(
     var searchQuery by remember { mutableStateOf("") }
     var currentPage by remember { mutableIntStateOf(1) }
     val pageSize = 8
+
+    // State for alias dialog when adding a team
+    var teamPendingAlias by remember { mutableStateOf<Triple<Team, Sport, Competition>?>(null) }
+    var favoritePendingEditAlias by remember { mutableStateOf<Favorite?>(null) }
 
     val filteredTeams = remember(teams, searchQuery) {
         if (searchQuery.isBlank()) teams
@@ -330,6 +374,34 @@ private fun TeamsSelectionTab(
         filteredTeams.drop(start).take(pageSize)
     }
 
+    // Dialog for setting alias when selecting a new team
+    teamPendingAlias?.let { (team, sport, comp) ->
+        AliasDialog(
+            teamName = team.name,
+            shieldUrl = team.shieldUrl,
+            initialAlias = null,
+            onDismiss = { teamPendingAlias = null },
+            onConfirm = { alias ->
+                onAddFavorite(team, sport, comp, alias)
+                teamPendingAlias = null
+            }
+        )
+    }
+
+    // Dialog for editing existing alias
+    favoritePendingEditAlias?.let { fav ->
+        AliasDialog(
+            teamName = fav.teamName,
+            shieldUrl = fav.shieldUrl,
+            initialAlias = fav.alias,
+            onDismiss = { favoritePendingEditAlias = null },
+            onConfirm = { newAlias ->
+                onUpdateAlias(fav, newAlias)
+                favoritePendingEditAlias = null
+            }
+        )
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -344,7 +416,7 @@ private fun TeamsSelectionTab(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Elige deporte y competición para ver y seleccionar equipos. Las imágenes de los equipos se capturan automáticamente.",
+                    text = "Elige deporte y competición para ver y seleccionar equipos. Al añadir un equipo podrás asignarle un alias personalizado.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -477,16 +549,12 @@ private fun TeamsSelectionTab(
                 }
             } else {
                 items(pagedTeams, key = { it.id }) { team ->
-                    val isFavorite = favorites.any {
-                        it.sportId == selectedSport?.id &&
-                            it.competitionId == selectedCompetition?.id &&
-                            it.teamId == team.id
-                    }
                     val existingFav = favorites.find {
                         it.sportId == selectedSport?.id &&
                             it.competitionId == selectedCompetition?.id &&
                             it.teamId == team.id
                     }
+                    val isFavorite = existingFav != null
 
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -512,34 +580,42 @@ private fun TeamsSelectionTab(
 
                             Spacer(modifier = Modifier.width(12.dp))
 
-                            Text(
-                                text = team.name,
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.weight(1f)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = team.name,
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                if (existingFav != null && !existingFav.alias.isNullOrBlank()) {
+                                    Text(
+                                        text = existingFav.alias,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontStyle = FontStyle.Italic,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
 
                             Spacer(modifier = Modifier.width(8.dp))
 
-                            if (isFavorite) {
+                            if (isFavorite && existingFav != null) {
                                 Column(horizontalAlignment = Alignment.End) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            selectedSport?.let { sport ->
-                                                selectedCompetition?.let { comp ->
-                                                    onToggleFavorite(team, sport, comp)
-                                                }
-                                            }
-                                        }
-                                    ) {
-                                        Text("Quitar")
-                                    }
-                                    if (existingFav != null) {
-                                        Button(
-                                            onClick = { onGoToCalendar(existingFav) },
-                                            modifier = Modifier.padding(top = 4.dp)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        OutlinedButton(
+                                            onClick = { favoritePendingEditAlias = existingFav }
                                         ) {
-                                            Text("Ver calendario")
+                                            Text("Alias")
                                         }
+                                        OutlinedButton(
+                                            onClick = { onRemoveFavorite(existingFav) }
+                                        ) {
+                                            Text("Quitar")
+                                        }
+                                    }
+                                    Button(
+                                        onClick = { onGoToCalendar(existingFav) },
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    ) {
+                                        Text("Ver calendario")
                                     }
                                 }
                             } else {
@@ -547,7 +623,7 @@ private fun TeamsSelectionTab(
                                     onClick = {
                                         selectedSport?.let { sport ->
                                             selectedCompetition?.let { comp ->
-                                                onToggleFavorite(team, sport, comp)
+                                                teamPendingAlias = Triple(team, sport, comp)
                                             }
                                         }
                                     }
@@ -575,6 +651,7 @@ private fun CalendarsTab(
     roundFilters: SnapshotStateMap<String, Int>,
     onSelectTeam: (String) -> Unit,
     onRefreshCalendar: (Favorite) -> Unit,
+    onUpdateAlias: (Favorite, String?) -> Unit,
     onRemoveFavorite: (Favorite) -> Unit,
     onGoToSelection: () -> Unit
 ) {
@@ -624,11 +701,27 @@ private fun CalendarsTab(
 
     val currentKey = "${currentFavorite.sportId}:${currentFavorite.competitionId}:${currentFavorite.teamId}"
 
+    var favoritePendingEditAlias by remember { mutableStateOf<Favorite?>(null) }
+
     // Load active team calendar when rendered if not already loaded
     LaunchedEffect(currentKey) {
         if (!teamCalendars.containsKey(currentKey)) {
             onRefreshCalendar(currentFavorite)
         }
+    }
+
+    // Dialog for editing alias from the calendar screen
+    favoritePendingEditAlias?.let { fav ->
+        AliasDialog(
+            teamName = fav.teamName,
+            shieldUrl = fav.shieldUrl,
+            initialAlias = fav.alias,
+            onDismiss = { favoritePendingEditAlias = null },
+            onConfirm = { newAlias ->
+                onUpdateAlias(fav, newAlias)
+                favoritePendingEditAlias = null
+            }
+        )
     }
 
     val matches = teamCalendars[currentKey] ?: emptyList()
@@ -646,7 +739,7 @@ private fun CalendarsTab(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // TabRow of selected teams for separate management
+        // TabRow of selected teams for separate management - Shield on the left of the alias!
         ScrollableTabRow(
             selectedTabIndex = favorites.indexOf(currentFavorite).coerceAtLeast(0),
             edgePadding = 12.dp
@@ -654,6 +747,7 @@ private fun CalendarsTab(
             favorites.forEach { fav ->
                 val favKey = "${fav.sportId}:${fav.competitionId}:${fav.teamId}"
                 val isSelected = favKey == currentKey
+                val calendarTitle = fav.calendarDisplayName
                 Tab(
                     selected = isSelected,
                     onClick = { onSelectTeam(favKey) },
@@ -663,15 +757,17 @@ private fun CalendarsTab(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.padding(vertical = 4.dp)
                         ) {
+                            // Team shield on the left of the alias in top bar tabs
                             TeamShield(
                                 shieldUrl = fav.shieldUrl,
                                 teamName = fav.teamName,
                                 modifier = Modifier.size(24.dp)
                             )
                             Text(
-                                text = fav.teamName,
+                                text = calendarTitle,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
                         }
                     }
@@ -713,6 +809,30 @@ private fun CalendarsTab(
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (!currentFavorite.alias.isNullOrBlank()) {
+                                    Text(
+                                        text = currentFavorite.alias,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontStyle = FontStyle.Italic,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { favoritePendingEditAlias = currentFavorite },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "Editar alias del calendario",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                             Text(
                                 text = "${currentFavorite.sportName} · ${currentFavorite.competitionName}",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -807,7 +927,7 @@ private fun CalendarsTab(
                     }
                 } else {
                     items(displayedMatches, key = { it.id }) { match ->
-                        MatchCard(match = match, activeTeamId = currentFavorite.teamId)
+                        MatchCard(match = match, activeFavorite = currentFavorite)
                     }
                 }
             }
@@ -818,8 +938,9 @@ private fun CalendarsTab(
 }
 
 @Composable
-private fun MatchCard(match: CalendarMatch, activeTeamId: Int) {
+private fun MatchCard(match: CalendarMatch, activeFavorite: Favorite) {
     val context = LocalContext.current
+    val activeTeamId = activeFavorite.teamId
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -875,17 +996,17 @@ private fun MatchCard(match: CalendarMatch, activeTeamId: Int) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val shield = if (match.localTeamId == activeTeamId) match.localShieldUrl else match.visitorShieldUrl
-                    val name = if (match.localTeamId == activeTeamId) match.localTeamName else match.visitorTeamName
+                    val restingTeamName = if (match.localTeamId == activeTeamId) match.localTeamName else match.visitorTeamName
 
                     TeamShield(
                         shieldUrl = shield,
-                        teamName = name,
+                        teamName = restingTeamName,
                         modifier = Modifier.size(38.dp)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = name,
+                            text = restingTeamName,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -898,19 +1019,21 @@ private fun MatchCard(match: CalendarMatch, activeTeamId: Int) {
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Local Team
+                    // Local Team - always official team name
+                    val isLocalCurrent = match.localTeamId == activeTeamId
                     TeamMatchRow(
                         name = match.localTeamName,
                         shieldUrl = match.localShieldUrl,
-                        isCurrentTeam = match.localTeamId == activeTeamId,
+                        isCurrentTeam = isLocalCurrent,
                         score = match.localScore
                     )
 
-                    // Visitor Team
+                    // Visitor Team - always official team name
+                    val isVisitorCurrent = match.visitorTeamId == activeTeamId
                     TeamMatchRow(
                         name = match.visitorTeamName,
                         shieldUrl = match.visitorShieldUrl,
-                        isCurrentTeam = match.visitorTeamId == activeTeamId,
+                        isCurrentTeam = isVisitorCurrent,
                         score = match.visitorScore
                     )
                 }
@@ -968,7 +1091,7 @@ private fun TeamMatchRow(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Shield image to the left of the team name
+        // Shield image to the left of the team name / alias
         TeamShield(
             shieldUrl = shieldUrl,
             teamName = name,
@@ -994,6 +1117,81 @@ private fun TeamMatchRow(
             )
         }
     }
+}
+
+@Composable
+private fun AliasDialog(
+    teamName: String,
+    shieldUrl: String?,
+    initialAlias: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String?) -> Unit
+) {
+    var aliasText by remember { mutableStateOf(initialAlias.orEmpty()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Alias para el calendario") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    TeamShield(
+                        shieldUrl = shieldUrl,
+                        teamName = teamName,
+                        modifier = Modifier.size(44.dp)
+                    )
+                    Column {
+                        Text(
+                            text = teamName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Equipo oficial",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = aliasText,
+                    onValueChange = { aliasText = it },
+                    label = { Text("Alias del calendario (opcional)") },
+                    placeholder = { Text("Ej. Mi hijo, Infantil A, Mi equipo...") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    supportingText = {
+                        Text("El nombre oficial del equipo se mantiene inalterado. El alias solo se usa para organizar y gestionar los calendarios en las pestañas y barra superior.")
+                    }
+                )
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (initialAlias == null) {
+                    TextButton(onClick = { onConfirm(null) }) {
+                        Text("Añadir sin alias")
+                    }
+                }
+                Button(
+                    onClick = {
+                        onConfirm(aliasText.trim().takeIf { it.isNotBlank() })
+                    }
+                ) {
+                    Text("Guardar")
+                }
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
 }
 
 @Composable

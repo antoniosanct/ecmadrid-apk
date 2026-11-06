@@ -134,10 +134,13 @@ class CalendarRepositoryTest {
         val team = Team(1, "Equipo A", "https://example.com/shield.png")
         val fav1 = Favorite(1, "Baloncesto", 100, "Comp A", 1, "Equipo A", team.shieldUrl)
         val fav2 = Favorite(1, "Baloncesto", 100, "Comp A", 1, "Equipo A")
+        val fav3 = Favorite(1, "Baloncesto", 100, "Comp A", 1, "Equipo A", team.shieldUrl, "Mi Equipo Favorito")
 
         assertEquals("https://example.com/shield.png", fav1.shieldUrl)
         assertEquals(fav1.sportId, fav2.sportId)
         assertEquals(fav1.competitionId, fav2.competitionId)
         assertEquals(fav1.teamId, fav2.teamId)
+        assertEquals("Mi Equipo Favorito", fav3.displayName)
+        assertEquals("Equipo A", fav1.displayName)
     }
 }
