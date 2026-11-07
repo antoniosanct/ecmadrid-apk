@@ -14,12 +14,14 @@ jobs:
       - name: Checkout del código
         uses: actions/checkout@v4
 
-      - name: Configurar JDK 21
-        uses: actions/setup-java@v4
+      - name: Configurar JDK 21 (JetBrains Space)
+        uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
+          distribution: 'jetbrains'
           java-version: '21'
           cache: 'gradle'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Dar permisos de ejecución a Gradle
         run: chmod +x ./gradlew
@@ -35,12 +37,13 @@ jobs:
         uses: r0adkll/sign-android-release@v1
         id: sign_app
         with:
-          releaseDirectory: app/build/outputs/apk/release
+          releaseDirectory: app/build/outputs/bundle/release
           signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
           alias: ${{ secrets.KEY_ALIAS }}
-          singleReleaseFile: app/build/outputs/apk/release/app-release.apk
           keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Crear GitHub Release y Subir APK
         uses: softprops/action-gh-release@v2
