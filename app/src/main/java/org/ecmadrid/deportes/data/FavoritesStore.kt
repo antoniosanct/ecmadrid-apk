@@ -20,7 +20,8 @@ class FavoritesStore(context: Context) {
                 competitionName = item.getString("competitionName"),
                 teamId = item.getInt("teamId"),
                 teamName = item.getString("teamName"),
-                shieldUrl = item.optString("shieldUrl").takeIf { it.isNotBlank() && it != "null" }
+                shieldUrl = item.optString("shieldUrl").takeIf { it.isNotBlank() && it != "null" },
+                alias = item.optString("alias").takeIf { it.isNotBlank() && it != "null" }
             )
         }
     }
@@ -36,6 +37,7 @@ class FavoritesStore(context: Context) {
                 .put("teamId", favorite.teamId)
                 .put("teamName", favorite.teamName)
             favorite.shieldUrl?.let { obj.put("shieldUrl", it) }
+            favorite.alias?.takeIf { it.isNotBlank() }?.let { obj.put("alias", it) }
             array.put(obj)
         }
         check(preferences.edit().putString(FAVORITES_KEY, array.toString()).commit()) {
