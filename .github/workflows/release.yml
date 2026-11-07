@@ -27,6 +27,13 @@ jobs:
       - name: Compilar APK de Producción (Release)
         run: ./gradlew bundleRelease
 
+      - name: Inspeccionar rutas de APKs generados
+        run: |
+          echo "=== Buscando todos los archivos .apk generados ==="
+          find . -name "*.apk"
+          echo "=== Listando estructura de build/outputs ==="
+          ls -R app/build/outputs/ || true
+
       - name: Configurar Clave de Firma (Keystore)
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/release.keystore
@@ -35,7 +42,7 @@ jobs:
         uses: r0adkll/sign-android-release@v1
         id: sign_app
         with:
-          releaseDirectory: app/build/outputs/apk/**/release
+          releaseDirectory: app/build/outputs/apk/release
           signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
           alias: ${{ secrets.KEY_ALIAS }}
           keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
