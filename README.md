@@ -10,6 +10,7 @@ Aplicación Android nativa desarrollada en Kotlin y Jetpack Compose para consult
 - **Paginación y búsqueda de equipos:** Navegación paginada entre los equipos de cada competición con filtro de búsqueda por texto en tiempo real.
 - **Captura automática de escudos e imágenes:** Obtención y normalización de los emblemas/escudos oficiales de cada club/colegio a partir de los datos publicados, mostrándolos a la izquierda del nombre tanto en la selección como en el calendario.
 - **Seguimiento multiequipo con calendarios independientes:** Permite seleccionar y guardar múltiples equipos en favoritos, gestionando y visualizando sus calendarios por separado mediante pestañas individuales.
+- **Vistas por equipo:** Cada equipo dispone de pestañas de Calendario, Resultados y Clasificación; esta última muestra posición, equipo, puntos, partidos jugados y diferencia de goles.
 - **Detalle de enfrentamientos:** Consulta de partidos por jornada o temporada completa, con fechas y horas formateadas, estado de la jornada (*Pendiente*, *Aplazado*, *Modificado*, *Descansa*), marcadores y ubicación de los campos de juego con enlace a Google Maps.
 - **Persistencia local:** Los equipos favoritos se almacenan en el dispositivo mediante `SharedPreferences`, sin requerir registro ni envío de datos personales a servidores externos.
 - **Carga concurrente:** Consulta optimizada de jornadas en paralelo mediante corrutinas de Kotlin.

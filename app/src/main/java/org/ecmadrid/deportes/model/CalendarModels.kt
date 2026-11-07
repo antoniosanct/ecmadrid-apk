@@ -34,6 +34,7 @@ data class Favorite(
 data class CalendarMatch(
     val id: Int,
     val roundNumber: Int,
+    val groupId: Int = 0,
     val roundName: String = "Jornada $roundNumber",
     val date: String? = null,
     val time: String? = null,
@@ -52,7 +53,16 @@ data class CalendarMatch(
     val visitorScore: Int? = null,
     val isResting: Boolean = false,
     val isPostponed: Boolean = false,
-    val isModified: Boolean = false
+    val isModified: Boolean = false,
+    val isPlayed: Boolean = false
+)
+
+data class TeamStanding(
+    val position: Int,
+    val teamName: String,
+    val points: Int,
+    val matchesPlayed: Int,
+    val goalDifference: Int
 )
 
 val sports = listOf(
