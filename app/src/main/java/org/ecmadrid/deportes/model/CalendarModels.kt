@@ -17,8 +17,19 @@ data class Favorite(
     val competitionName: String,
     val teamId: Int,
     val teamName: String,
-    val shieldUrl: String? = null
-)
+    val shieldUrl: String? = null,
+    val alias: String? = null
+) {
+    /**
+     * Nombre a mostrar para la gestión del calendario en pestañas y barra superior (alias o nombre del equipo).
+     * El nombre oficial del equipo se mantiene inalterado en [teamName].
+     */
+    val calendarDisplayName: String
+        get() = alias?.takeIf { it.isNotBlank() } ?: teamName
+
+    val displayName: String
+        get() = calendarDisplayName
+}
 
 data class CalendarMatch(
     val id: Int,
