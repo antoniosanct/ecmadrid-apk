@@ -9,16 +9,21 @@ import org.ecmadrid.deportes.model.CalendarMatch
 import org.ecmadrid.deportes.model.Competition
 import org.ecmadrid.deportes.model.Sport
 import org.ecmadrid.deportes.model.Team
+import org.ecmadrid.deportes.model.TeamStanding
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.IOException
+import java.net.CookieManager
+import java.net.CookiePolicy
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 class CalendarRepository {
+    private val cookieManager = CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER)
+
     suspend fun competitions(sport: Sport): List<Competition> = withContext(Dispatchers.IO) {
         val seasonId = activeSeasonId()
         val response = getJsonObject(
@@ -108,6 +113,50 @@ class CalendarRepository {
         }
     }
 
+    suspend fun teamStandings(groupId: Int, sportId: Int): List<TeamStanding> =
+        withContext(Dispatchers.IO) {
+            getText("/Clasificacion/ClasificacionTemporada")
+            val response = getJsonObject(
+                "/Clasificaciones/ObtenerClasificacionJornadaGrupo" +
+                    "?IdGrupo=$groupId&IdJornada=0&IdDeporte=$sportId&IdEquipo=0"
+            )
+            parseStandings(response)
+        }
+
+    suspend fun groupResults(
+        sportId: Int,
+        competitionId: Int,
+        groupId: Int
+    ): List<CalendarMatch> = withContext(Dispatchers.IO) {
+        val roundResponse = getJsonObject(
+            "/Calendarios/ObtenerDatosJornadaGrupo" +
+                "?IdDeporte=$sportId&IdCompeticion=$competitionId" +
+                "&IdCategoria=-1&IdGrupo=$groupId&IdJornada=0&IdEquipo=0"
+        )
+        val rounds = roundResponse.optJSONArray("jornadas") ?: JSONArray()
+
+        coroutineScope {
+            val calendars = (0 until rounds.length()).mapNotNull { index ->
+                val roundNumber = rounds.getJSONObject(index).optInt("NumeroJornada")
+                if (roundNumber > 0) {
+                    async(Dispatchers.IO) {
+                        getJsonArray(
+                            "/Calendarios/ObtenerCalendarioAgrupado" +
+                                "?IdDeporte=$sportId&IdCompeticion=$competitionId" +
+                                "&IdCategoria=-1&NumeroJornada=$roundNumber&IdEquipo=0"
+                        )
+                    }
+                } else null
+            }.awaitAll()
+
+            val matches = mutableMapOf<Int, CalendarMatch>()
+            calendars.forEach { calendar ->
+                collectMatchesForGroup(calendar, groupId, matches)
+            }
+            matches.values.sortedWith(compareBy({ it.roundNumber }, { it.rawDateTime ?: "" }))
+        }
+    }
+
     private fun activeSeasonId(): Int {
         val page = getText("/Calendarios/CalendarioTemporada")
         val match = ACTIVE_SEASON.find(page)
@@ -169,14 +218,48 @@ class CalendarRepository {
                 val groups = categories.getJSONObject(categoryIndex).optJSONArray("Grupos")
                     ?: continue
                 for (groupIndex in 0 until groups.length()) {
-                    val fixtures = groups.getJSONObject(groupIndex).optJSONArray("Enfrentamientos")
+                    val group = groups.getJSONObject(groupIndex)
+                    val fixtures = group.optJSONArray("Enfrentamientos")
                         ?: continue
                     for (fixtureIndex in 0 until fixtures.length()) {
                         val fixture = fixtures.getJSONObject(fixtureIndex)
                         val idLocal = fixture.optInt("IdEquipoLocal")
                         val idVisitante = fixture.optInt("IdEquipoVisitante")
                         if (idLocal == teamId || idVisitante == teamId) {
-                            result.add(parseCalendarMatch(fixture))
+                            val match = parseCalendarMatch(fixture)
+                            result.add(
+                                if (match.groupId > 0) match
+                                else match.copy(groupId = group.optInt("Id"))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun collectMatchesForGroup(
+        competitions: JSONArray,
+        groupId: Int,
+        result: MutableMap<Int, CalendarMatch>
+    ) {
+        for (competitionIndex in 0 until competitions.length()) {
+            val categories = competitions.getJSONObject(competitionIndex).optJSONArray("Categorias")
+                ?: continue
+            for (categoryIndex in 0 until categories.length()) {
+                val groups = categories.getJSONObject(categoryIndex).optJSONArray("Grupos")
+                    ?: continue
+                for (groupIndex in 0 until groups.length()) {
+                    val group = groups.getJSONObject(groupIndex)
+                    if (group.optInt("IdGrupo", group.optInt("Id")) != groupId) continue
+                    val fixtures = group.optJSONArray("Enfrentamientos") ?: continue
+                    for (fixtureIndex in 0 until fixtures.length()) {
+                        val fixture = fixtures.getJSONObject(fixtureIndex)
+                        val match = parseCalendarMatch(fixture)
+                        result[match.id] = if (match.groupId > 0) {
+                            match
+                        } else {
+                            match.copy(groupId = groupId)
                         }
                     }
                 }
@@ -219,11 +302,16 @@ class CalendarRepository {
         val isClosed = fixture.optBoolean("Cerrado", false)
         val scoreLocal = fixture.optInt("ResultadoEquipoLocal", -1)
         val scoreVisitante = fixture.optInt("ResultadoEquipoVisitante", -1)
-        val hasScore = isClosed || (scoreLocal > 0 || scoreVisitante > 0)
+        val isPlayed = statusName?.contains("jugad", ignoreCase = true) == true ||
+            statusName?.contains("finaliz", ignoreCase = true) == true ||
+            (isClosed && scoreLocal >= 0 && scoreVisitante >= 0) ||
+            scoreLocal > 0 || scoreVisitante > 0
+        val hasScore = isPlayed
 
         return CalendarMatch(
             id = id,
             roundNumber = roundNumber,
+            groupId = fixture.optInt("IdGrupo"),
             roundName = "Jornada $roundNumber",
             date = formattedDate,
             time = formattedTime,
@@ -242,8 +330,23 @@ class CalendarRepository {
             visitorScore = if (hasScore && scoreVisitante >= 0) scoreVisitante else null,
             isResting = isResting,
             isPostponed = isPostponed,
-            isModified = fixture.optBoolean("CambioAdministrador", false)
+            isModified = fixture.optBoolean("CambioAdministrador", false),
+            isPlayed = !isResting && isPlayed
         )
+    }
+
+    internal fun parseStandings(response: JSONObject): List<TeamStanding> {
+        val standings = response.optJSONArray("clasificacionJornada") ?: JSONArray()
+        return (0 until standings.length()).map { index ->
+            val row = standings.getJSONObject(index)
+            TeamStanding(
+                position = row.optInt("Posicion"),
+                teamName = row.optString("Equipo").takeUnless { it == "null" }.orEmpty(),
+                points = row.optInt("Puntos"),
+                matchesPlayed = row.optInt("Disputados"),
+                goalDifference = row.optInt("Diferencia")
+            )
+        }
     }
 
     internal fun formatDateTime(raw: String?): Pair<String, String> {
@@ -318,33 +421,63 @@ class CalendarRepository {
     }
 
     private fun getText(path: String): String {
-        val connection = URL("$BASE_URL$path").openConnection() as HttpURLConnection
-        try {
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 20_000
-            connection.setRequestProperty("Accept", "application/json, text/html")
-            connection.setRequestProperty("User-Agent", "ECMadridDeportes/1.0 (Android)")
+        var url = URL("$BASE_URL$path")
+        for (redirectCount in 0..MAX_REDIRECTS) {
+            val connection = url.openConnection() as HttpURLConnection
+            try {
+                connection.instanceFollowRedirects = false
+                val cookieHeaders = synchronized(cookieManager) {
+                    cookieManager.get(url.toURI(), emptyMap())
+                }
+                cookieHeaders.forEach { (name, values) ->
+                    values.forEach { value -> connection.addRequestProperty(name, value) }
+                }
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 20_000
+                connection.setRequestProperty("Accept", "application/json, text/html")
+                connection.setRequestProperty("User-Agent", "ECMadridDeportes/1.0 (Android)")
 
-            val statusCode = connection.responseCode
-            val stream = if (statusCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream
+                val statusCode = connection.responseCode
+                synchronized(cookieManager) {
+                    cookieManager.put(url.toURI(), connection.headerFields)
+                }
+                if (statusCode in 300..399) {
+                    val location = connection.getHeaderField("Location")
+                        ?: throw IOException("La web devolvió una redirección sin destino.")
+                    val redirectedUrl = URL(url, location)
+                    if (redirectedUrl.protocol != "https" || redirectedUrl.host != BASE_HOST) {
+                        throw IOException("La web intentó redirigir la consulta a un servidor no permitido.")
+                    }
+                    if (redirectCount == MAX_REDIRECTS) {
+                        throw IOException("La web superó el máximo de redirecciones permitido.")
+                    }
+                    url = redirectedUrl
+                    continue
+                }
+
+                val stream = if (statusCode in 200..299) {
+                    connection.inputStream
+                } else {
+                    connection.errorStream
+                }
+                val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                if (statusCode !in 200..299) {
+                    throw IOException("La web respondió con el código HTTP $statusCode.")
+                }
+                if (body.isBlank()) throw IOException("La web devolvió una respuesta vacía.")
+                return body
+            } finally {
+                connection.disconnect()
             }
-            val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            if (statusCode !in 200..299) {
-                throw IOException("La web respondió con el código HTTP $statusCode.")
-            }
-            if (body.isBlank()) throw IOException("La web devolvió una respuesta vacía.")
-            return body
-        } finally {
-            connection.disconnect()
         }
+        throw IOException("La web superó el máximo de redirecciones permitido.")
     }
 
     private companion object {
         const val BASE_URL = "https://juegosdeportivos.ecmadrid.org"
+        const val BASE_HOST = "juegosdeportivos.ecmadrid.org"
+        const val MAX_REDIRECTS = 5
         val ACTIVE_SEASON =
             Regex(""""Id":(\d+),"Nombre":"TEMPORADA [^"]+".*?"Activa":true""", RegexOption.DOT_MATCHES_ALL)
         val DATE_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")
