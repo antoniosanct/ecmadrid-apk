@@ -58,6 +58,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -92,11 +93,25 @@ import org.ecmadrid.deportes.model.sports
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
+private val EcMadridRed = Color(0xFFAF2600)
+private val EcMadridDarkRed = Color(0xFF821C00)
+
+private val AppColorScheme = lightColorScheme(
+    primary = EcMadridRed,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFFFDAD3),
+    onPrimaryContainer = EcMadridDarkRed,
+    secondary = EcMadridDarkRed,
+    onSecondary = Color.White,
+    surface = Color.White,
+    onSurface = Color(0xFF242424)
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = AppColorScheme) {
                 MainAppScreen()
             }
         }
@@ -227,7 +242,8 @@ private fun MainAppScreen() {
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        containerColor = EcMadridRed,
+                        titleContentColor = Color.White
                     )
                 )
                 PrimaryTabRow(selectedTabIndex = selectedTabIndex) {
