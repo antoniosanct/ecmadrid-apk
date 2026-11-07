@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -89,6 +92,7 @@ import org.ecmadrid.deportes.model.Competition
 import org.ecmadrid.deportes.model.Favorite
 import org.ecmadrid.deportes.model.Sport
 import org.ecmadrid.deportes.model.Team
+import org.ecmadrid.deportes.model.TeamStanding
 import org.ecmadrid.deportes.model.sports
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -144,6 +148,12 @@ private fun MainAppScreen() {
     val calendarLoading = remember { mutableStateMapOf<String, Boolean>() }
     val calendarErrors = remember { mutableStateMapOf<String, String>() }
     val roundFilters = remember { mutableStateMapOf<String, Int>() }
+    val teamStandings = remember { mutableStateMapOf<String, List<TeamStanding>>() }
+    val standingsLoading = remember { mutableStateMapOf<String, Boolean>() }
+    val standingsErrors = remember { mutableStateMapOf<String, String>() }
+    val groupResults = remember { mutableStateMapOf<String, List<CalendarMatch>>() }
+    val groupResultsLoading = remember { mutableStateMapOf<String, Boolean>() }
+    val groupResultsErrors = remember { mutableStateMapOf<String, String>() }
 
     fun refreshCalendar(favorite: Favorite, force: Boolean = false) {
         val key = "${favorite.sportId}:${favorite.competitionId}:${favorite.teamId}"
@@ -161,6 +171,42 @@ private fun MainAppScreen() {
                 calendarErrors[key] = e.message ?: "No se pudo cargar el calendario de este equipo."
             } finally {
                 calendarLoading[key] = false
+            }
+        }
+    }
+
+    fun refreshStandings(favorite: Favorite, groupId: Int) {
+        val key = "${favorite.sportId}:${favorite.competitionId}:${favorite.teamId}"
+        if (groupId <= 0 || standingsLoading[key] == true || teamStandings.containsKey(key)) return
+        standingsLoading[key] = true
+        standingsErrors.remove(key)
+        scope.launch {
+            try {
+                teamStandings[key] = repository.teamStandings(groupId, favorite.sportId)
+            } catch (e: Exception) {
+                standingsErrors[key] = e.message ?: "No se pudo cargar la clasificación de este equipo."
+            } finally {
+                standingsLoading[key] = false
+            }
+        }
+    }
+
+    fun refreshGroupResults(favorite: Favorite, groupId: Int) {
+        val key = "${favorite.sportId}:${favorite.competitionId}:${favorite.teamId}"
+        if (groupId <= 0 || groupResultsLoading[key] == true || groupResults.containsKey(key)) return
+        groupResultsLoading[key] = true
+        groupResultsErrors.remove(key)
+        scope.launch {
+            try {
+                groupResults[key] = repository.groupResults(
+                    favorite.sportId,
+                    favorite.competitionId,
+                    groupId
+                )
+            } catch (e: Exception) {
+                groupResultsErrors[key] = e.message ?: "No se pudieron cargar los resultados de este grupo."
+            } finally {
+                groupResultsLoading[key] = false
             }
         }
     }
@@ -206,6 +252,12 @@ private fun MainAppScreen() {
             calendarLoading.remove(key)
             calendarErrors.remove(key)
             roundFilters.remove(key)
+            teamStandings.remove(key)
+            standingsLoading.remove(key)
+            standingsErrors.remove(key)
+            groupResults.remove(key)
+            groupResultsLoading.remove(key)
+            groupResultsErrors.remove(key)
         } catch (_: Exception) {
         }
     }
@@ -258,11 +310,11 @@ private fun MainAppScreen() {
                         onClick = { selectedTabIndex = 1 },
                         text = {
                             Text(
-                                if (favorites.isEmpty()) "Calendarios"
-                                else "Calendarios (${favorites.size})"
+                                if (favorites.isEmpty()) "Favoritos"
+                                else "Favoritos (${favorites.size})"
                             )
                         },
-                        icon = { Icon(Icons.Default.CalendarMonth, contentDescription = null) }
+                        icon = { Icon(Icons.Default.Star, contentDescription = null) }
                     )
                 }
             }
@@ -293,6 +345,14 @@ private fun MainAppScreen() {
                     calendarLoading = calendarLoading,
                     calendarErrors = calendarErrors,
                     roundFilters = roundFilters,
+                    teamStandings = teamStandings,
+                    standingsLoading = standingsLoading,
+                    standingsErrors = standingsErrors,
+                    onRefreshStandings = ::refreshStandings,
+                    groupResults = groupResults,
+                    groupResultsLoading = groupResultsLoading,
+                    groupResultsErrors = groupResultsErrors,
+                    onRefreshGroupResults = ::refreshGroupResults,
                     onSelectTeam = { key ->
                         activeCalendarTeamKey = key
                         favorites.find { "${it.sportId}:${it.competitionId}:${it.teamId}" == key }?.let {
@@ -657,6 +717,7 @@ private fun TeamsSelectionTab(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CalendarsTab(
     favorites: List<Favorite>,
@@ -665,6 +726,14 @@ private fun CalendarsTab(
     calendarLoading: Map<String, Boolean>,
     calendarErrors: Map<String, String>,
     roundFilters: SnapshotStateMap<String, Int>,
+    teamStandings: Map<String, List<TeamStanding>>,
+    standingsLoading: Map<String, Boolean>,
+    standingsErrors: Map<String, String>,
+    onRefreshStandings: (Favorite, Int) -> Unit,
+    groupResults: Map<String, List<CalendarMatch>>,
+    groupResultsLoading: Map<String, Boolean>,
+    groupResultsErrors: Map<String, String>,
+    onRefreshGroupResults: (Favorite, Int) -> Unit,
     onSelectTeam: (String) -> Unit,
     onRefreshCalendar: (Favorite) -> Unit,
     onUpdateAlias: (Favorite, String?) -> Unit,
@@ -744,9 +813,36 @@ private fun CalendarsTab(
     val isLoading = calendarLoading[currentKey] == true
     val error = calendarErrors[currentKey]
     val selectedRound = roundFilters[currentKey]
+    var selectedTeamPage by remember(currentKey) { mutableIntStateOf(0) }
 
     val availableRounds = remember(matches) {
         matches.map { it.roundNumber }.distinct().sorted()
+    }
+
+    val groupId = matches.firstOrNull { it.groupId > 0 }?.groupId ?: 0
+    val groupMatches = groupResults[currentKey].orEmpty()
+    val availableResultRounds = remember(groupMatches) {
+        groupMatches.map { it.roundNumber }.distinct().sorted()
+    }
+    val displayedResultRounds = remember(groupMatches, selectedRound) {
+        groupMatches
+            .filter { selectedRound == null || it.roundNumber == selectedRound }
+            .groupBy { it.roundNumber }
+            .toSortedMap()
+    }
+    val isLoadingGroupResults = groupResultsLoading[currentKey] == true
+    val groupResultsError = groupResultsErrors[currentKey]
+    val standings = teamStandings[currentKey].orEmpty()
+    val isLoadingStandings = standingsLoading[currentKey] == true
+    val standingsError = standingsErrors[currentKey]
+
+    LaunchedEffect(currentKey, selectedTeamPage, groupId) {
+        if (selectedTeamPage == 2 && groupId > 0) {
+            onRefreshStandings(currentFavorite, groupId)
+        }
+        if (selectedTeamPage == 1 && groupId > 0) {
+            onRefreshGroupResults(currentFavorite, groupId)
+        }
     }
 
     val displayedMatches = remember(matches, selectedRound) {
@@ -791,86 +887,109 @@ private fun CalendarsTab(
             }
         }
 
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TeamShield(
+                    shieldUrl = currentFavorite.shieldUrl,
+                    teamName = currentFavorite.teamName,
+                    modifier = Modifier.size(54.dp)
+                )
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = currentFavorite.teamName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (!currentFavorite.alias.isNullOrBlank()) {
+                            Text(
+                                text = currentFavorite.alias,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontStyle = FontStyle.Italic,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(
+                            onClick = { favoritePendingEditAlias = currentFavorite },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Editar alias del calendario",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    Text(
+                        text = "${currentFavorite.sportName} · ${currentFavorite.competitionName}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = { onRefreshCalendar(currentFavorite) }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Actualizar calendario")
+                }
+                IconButton(onClick = { onRemoveFavorite(currentFavorite) }) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Eliminar de favoritos",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+
+        PrimaryTabRow(selectedTabIndex = selectedTeamPage) {
+            Tab(
+                selected = selectedTeamPage == 0,
+                onClick = { selectedTeamPage = 0 },
+                text = { Text("Calendario") },
+                icon = { Icon(Icons.Default.CalendarMonth, contentDescription = null) }
+            )
+            Tab(
+                selected = selectedTeamPage == 1,
+                onClick = { selectedTeamPage = 1 },
+                text = { Text("Resultados") },
+                icon = { Icon(Icons.Default.CheckCircle, contentDescription = null) }
+            )
+            Tab(
+                selected = selectedTeamPage == 2,
+                onClick = { selectedTeamPage = 2 },
+                text = { Text("Clasificación") },
+                icon = { Icon(Icons.Default.Groups, contentDescription = null) }
+            )
+        }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Team Header
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TeamShield(
-                            shieldUrl = currentFavorite.shieldUrl,
-                            teamName = currentFavorite.teamName,
-                            modifier = Modifier.size(54.dp)
-                        )
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = currentFavorite.teamName,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                if (!currentFavorite.alias.isNullOrBlank()) {
-                                    Text(
-                                        text = currentFavorite.alias,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontStyle = FontStyle.Italic,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { favoritePendingEditAlias = currentFavorite },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Edit,
-                                        contentDescription = "Editar alias del calendario",
-                                        modifier = Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            Text(
-                                text = "${currentFavorite.sportName} · ${currentFavorite.competitionName}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(onClick = { onRefreshCalendar(currentFavorite) }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Actualizar calendario")
-                        }
-                        IconButton(onClick = { onRemoveFavorite(currentFavorite) }) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "Eliminar de favoritos",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            }
-
             // Round selector chips
-            if (availableRounds.size > 1 && !isLoading && error == null) {
+            if (
+                (selectedTeamPage == 0 && availableRounds.size > 1 && !isLoading && error == null) ||
+                    (selectedTeamPage == 1 && availableResultRounds.size > 1 && !isLoadingGroupResults)
+            ) {
+                val roundsForPage = if (selectedTeamPage == 0) availableRounds else availableResultRounds
+                val itemCount = if (selectedTeamPage == 0) matches.size else availableResultRounds.size
                 item {
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -880,10 +999,10 @@ private fun CalendarsTab(
                             FilterChip(
                                 selected = selectedRound == null,
                                 onClick = { roundFilters.remove(currentKey) },
-                                label = { Text("Todas (${matches.size})") }
+                                label = { Text("Todas ($itemCount)") }
                             )
                         }
-                        items(availableRounds) { roundNum ->
+                        items(roundsForPage) { roundNum ->
                             FilterChip(
                                 selected = selectedRound == roundNum,
                                 onClick = { roundFilters[currentKey] = roundNum },
@@ -894,7 +1013,7 @@ private fun CalendarsTab(
                 }
             }
 
-            if (isLoading) {
+            if (isLoading && selectedTeamPage != 2) {
                 item {
                     Row(
                         modifier = Modifier
@@ -910,7 +1029,7 @@ private fun CalendarsTab(
                 }
             }
 
-            if (error != null) {
+            if (error != null && selectedTeamPage != 2) {
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -932,7 +1051,7 @@ private fun CalendarsTab(
                 }
             }
 
-            if (!isLoading && error == null) {
+            if (selectedTeamPage == 0 && !isLoading && error == null) {
                 if (displayedMatches.isEmpty()) {
                     item {
                         Text(
@@ -948,9 +1067,283 @@ private fun CalendarsTab(
                 }
             }
 
+            if (selectedTeamPage == 1) {
+                when {
+                    isLoading && groupId == 0 -> item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Cargando datos del grupo...")
+                        }
+                    }
+                    groupId == 0 && error != null -> item {
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+                    }
+                    groupId == 0 -> item {
+                        Text(
+                            text = "No se ha encontrado el grupo de este equipo.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+                    }
+                    isLoadingGroupResults -> item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Cargando resultados del grupo...")
+                        }
+                    }
+                    groupResultsError != null -> item {
+                        Column(
+                            modifier = Modifier.padding(vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(groupResultsError, color = MaterialTheme.colorScheme.error)
+                            Button(onClick = { onRefreshGroupResults(currentFavorite, groupId) }) {
+                                Text("Reintentar")
+                            }
+                        }
+                    }
+                    groupMatches.isEmpty() -> item {
+                        Text(
+                            text = "No hay partidos publicados para este grupo.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+                    }
+                    else -> {
+                        displayedResultRounds.forEach { (roundNumber, roundMatches) ->
+                            item(key = "results-round-$roundNumber") {
+                                GroupResultsCard(
+                                    roundNumber = roundNumber,
+                                    matches = roundMatches,
+                                    activeFavorite = currentFavorite
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (selectedTeamPage == 2) {
+                when {
+                    isLoading && groupId == 0 -> item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Cargando datos del equipo...")
+                        }
+                    }
+                    groupId == 0 -> item {
+                        Text(
+                            text = error ?: "No se ha encontrado el grupo de este equipo.",
+                            color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+                    }
+                    isLoadingStandings -> item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Cargando clasificación...")
+                        }
+                    }
+                    standingsError != null -> item {
+                        Column(
+                            modifier = Modifier.padding(vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(standingsError, color = MaterialTheme.colorScheme.error)
+                            Button(onClick = { onRefreshStandings(currentFavorite, groupId) }) {
+                                Text("Reintentar")
+                            }
+                        }
+                    }
+                    standings.isEmpty() -> item {
+                        Text(
+                            text = "No hay clasificación publicada para este equipo.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+                    }
+                    else -> {
+                        item {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                StandingTableHeader()
+                                standings.forEach { standing ->
+                                    StandingTableRow(standing)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
     }
+}
+
+@Composable
+private fun StandingTableHeader() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StandingColumn("Pos.", 0.6f, true, true)
+        StandingColumn("Equipo", 1.3f, true)
+        StandingColumn("Ptos.", 0.8f, true, true)
+        StandingColumn("Jug.", 0.65f, true, true)
+        StandingColumn("Dif. Goles", 1.05f, true, true)
+    }
+}
+
+@Composable
+private fun StandingTableRow(standing: TeamStanding) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StandingColumn(standing.position.toString(), 0.6f, centered = true)
+        StandingColumn(standing.teamName, 1.3f)
+        StandingColumn(standing.points.toString(), 0.8f, centered = true)
+        StandingColumn(standing.matchesPlayed.toString(), 0.65f, centered = true)
+        StandingColumn(standing.goalDifference.toString(), 1.05f, centered = true)
+    }
+}
+
+@Composable
+private fun GroupResultsCard(
+    roundNumber: Int,
+    matches: List<CalendarMatch>,
+    activeFavorite: Favorite
+) {
+    val date = matches.firstOrNull()?.date.orEmpty()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "JORNADA $roundNumber${if (date.isNotBlank()) " · $date" else ""}",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            matches.forEach { match ->
+                val restingTeam = when {
+                    match.localTeamId == 0 -> match.visitorTeamName
+                    match.visitorTeamId == 0 -> match.localTeamName
+                    else -> null
+                }
+                if (!restingTeam.isNullOrBlank()) {
+                    Text(
+                        text = "$restingTeam (D)",
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (
+                            match.localTeamId == activeFavorite.teamId ||
+                            match.visitorTeamId == activeFavorite.teamId
+                        ) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                } else {
+                    GroupResultMatchRow(match)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupResultMatchRow(match: CalendarMatch) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = match.localTeamName,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "${match.localScore?.toString().orEmpty()} - ${match.visitorScore?.toString().orEmpty()}",
+            modifier = Modifier.padding(horizontal = 10.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        Text(
+            text = match.visitorTeamName,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun RowScope.StandingColumn(
+    text: String,
+    weight: Float,
+    isHeader: Boolean = false,
+    centered: Boolean = false
+) {
+    Text(
+        text = text,
+        modifier = Modifier.weight(weight),
+        style = if (isHeader) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
+        fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
+        color = if (isHeader) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        textAlign = if (centered) androidx.compose.ui.text.style.TextAlign.Center else null,
+        maxLines = if (isHeader) 2 else 3,
+        overflow = TextOverflow.Ellipsis
+    )
 }
 
 @Composable

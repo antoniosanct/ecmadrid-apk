@@ -59,6 +59,7 @@ class CalendarRepositoryTest {
             {
                 "Id": 1234,
                 "NumeroJornada": 3,
+                "IdGrupo": 116,
                 "FechaHora": "2026-11-21T10:00:00",
                 "IdEquipoLocal": 361,
                 "EquipoLocal": "CORAZONISTAS",
@@ -78,6 +79,7 @@ class CalendarRepositoryTest {
         val match = repository.parseCalendarMatch(json)
         assertEquals(1234, match.id)
         assertEquals(3, match.roundNumber)
+        assertEquals(116, match.groupId)
         assertEquals("21/11/2026", match.date)
         assertEquals("10:00", match.time)
         assertEquals("CORAZONISTAS", match.localTeamName)
@@ -87,6 +89,7 @@ class CalendarRepositoryTest {
         assertEquals(54, match.localScore)
         assertEquals(48, match.visitorScore)
         assertFalse(match.isResting)
+        assertTrue(match.isPlayed)
     }
 
     @Test
@@ -110,6 +113,36 @@ class CalendarRepositoryTest {
         val match = repository.parseCalendarMatch(json)
         assertTrue(match.isResting)
         assertEquals("Descansa", match.status)
+        assertFalse(match.isPlayed)
+    }
+
+    @Test
+    fun `test parseCalendarMatch leaves scores blank for an unplayed match`() {
+        val json = JSONObject(
+            """{"Id":78,"NumeroJornada":1,"IdGrupo":175,"IdEquipoLocal":394,"EquipoLocal":"DECROLY B","IdEquipoVisitante":30,"EquipoVisitante":"PUREZA DE MARIA D","EstadoPartido":"Pendiente de Jugar","ResultadoEquipoLocal":0,"ResultadoEquipoVisitante":0}"""
+        )
+
+        val match = repository.parseCalendarMatch(json)
+
+        assertEquals(175, match.groupId)
+        assertNull(match.localScore)
+        assertNull(match.visitorScore)
+        assertFalse(match.isPlayed)
+    }
+
+    @Test
+    fun `test parseStandings selects the fields shown in the classification tab`() {
+        val response = JSONObject(
+            """{"clasificacionJornada":[{"Posicion":2,"Equipo":"CORAZONISTAS","Puntos":7,"Disputados":4,"Diferencia":12}]}"""
+        )
+
+        val standing = repository.parseStandings(response).single()
+
+        assertEquals(2, standing.position)
+        assertEquals("CORAZONISTAS", standing.teamName)
+        assertEquals(7, standing.points)
+        assertEquals(4, standing.matchesPlayed)
+        assertEquals(12, standing.goalDifference)
     }
 
     @Test
