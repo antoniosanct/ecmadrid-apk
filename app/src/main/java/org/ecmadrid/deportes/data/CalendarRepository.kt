@@ -86,7 +86,7 @@ class CalendarRepository {
         )
         val rounds = roundResponse.optJSONArray("jornadas") ?: JSONArray()
 
-        coroutineScope {
+        val baseMatches = coroutineScope {
             val deferredCalendars = (0 until rounds.length()).mapNotNull { index ->
                 val roundNumber = rounds.getJSONObject(index).optInt("NumeroJornada")
                 if (roundNumber > 0) {
@@ -109,7 +109,36 @@ class CalendarRepository {
                     collectMatchesForTeam(calendar, teamId, matches)
                 }
             }
-            matches.sortedWith(compareBy({ it.roundNumber }, { it.rawDateTime ?: "" }))
+            matches
+        }
+
+        val groupIds = baseMatches.map { it.groupId }.filter { it > 0 }.distinct()
+        if (groupIds.isNotEmpty()) {
+            val groupMatchesMap = mutableMapOf<Int, CalendarMatch>()
+            coroutineScope {
+                groupIds.map { gid ->
+                    async(Dispatchers.IO) {
+                        runCatching {
+                            groupResults(sportId, competitionId, gid)
+                        }.getOrNull().orEmpty()
+                    }
+                }.awaitAll().flatten().forEach { gm ->
+                    groupMatchesMap[gm.id] = gm
+                }
+            }
+            baseMatches.map { bm ->
+                val gm = groupMatchesMap[bm.id]
+                if (gm != null && gm.isPlayed) {
+                    bm.copy(
+                        localScore = gm.localScore,
+                        visitorScore = gm.visitorScore,
+                        isPlayed = true,
+                        status = gm.status
+                    )
+                } else bm
+            }.sortedWith(compareBy({ it.roundNumber }, { it.rawDateTime ?: "" }))
+        } else {
+            baseMatches.sortedWith(compareBy({ it.roundNumber }, { it.rawDateTime ?: "" }))
         }
     }
 
@@ -136,24 +165,53 @@ class CalendarRepository {
         val rounds = roundResponse.optJSONArray("jornadas") ?: JSONArray()
 
         coroutineScope {
-            val calendars = (0 until rounds.length()).mapNotNull { index ->
-                val roundNumber = rounds.getJSONObject(index).optInt("NumeroJornada")
-                if (roundNumber > 0) {
+            val resultsPerRound = (0 until rounds.length()).mapNotNull { index ->
+                val roundObj = rounds.getJSONObject(index)
+                val roundId = roundObj.optInt("Id")
+                if (roundId > 0) {
                     async(Dispatchers.IO) {
-                        getJsonArray(
-                            "/Calendarios/ObtenerCalendarioAgrupado" +
-                                "?IdDeporte=$sportId&IdCompeticion=$competitionId" +
-                                "&IdCategoria=-1&NumeroJornada=$roundNumber&IdEquipo=0"
-                        )
+                        runCatching {
+                            val resp = getJsonObject(
+                                "/api/JornadaEnfrentamientosPorGrupo?action=ObtenerEnfrentamientosGrupoListado" +
+                                    "&IdDeporte=$sportId&IdCompeticion=$competitionId" +
+                                    "&IdCategoria=-1&IdGrupo=$groupId&IdJornada=$roundId&IdEquipo=0"
+                            )
+                            resp.optJSONArray("data")?.toObjects()?.map { fixture ->
+                                val match = parseCalendarMatch(fixture)
+                                if (match.groupId > 0) match else match.copy(groupId = groupId)
+                            }
+                        }.getOrNull()
                     }
                 } else null
             }.awaitAll()
 
-            val matches = mutableMapOf<Int, CalendarMatch>()
-            calendars.forEach { calendar ->
-                collectMatchesForGroup(calendar, groupId, matches)
+            val allMatches = resultsPerRound.filterNotNull().flatten()
+            if (allMatches.isNotEmpty()) {
+                allMatches.sortedWith(compareBy({ it.roundNumber }, { it.rawDateTime ?: "" }))
+            } else {
+                val calendars = (0 until rounds.length()).mapNotNull { index ->
+                    val roundNumber = rounds.getJSONObject(index).optInt("NumeroJornada")
+                    if (roundNumber > 0) {
+                        async(Dispatchers.IO) {
+                            runCatching {
+                                getJsonArray(
+                                    "/Calendarios/ObtenerCalendarioAgrupado" +
+                                        "?IdDeporte=$sportId&IdCompeticion=$competitionId" +
+                                        "&IdCategoria=-1&NumeroJornada=$roundNumber&IdEquipo=0"
+                                )
+                            }.getOrNull()
+                        }
+                    } else null
+                }.awaitAll()
+
+                val matches = mutableMapOf<Int, CalendarMatch>()
+                calendars.forEach { calendar ->
+                    if (calendar != null) {
+                        collectMatchesForGroup(calendar, groupId, matches)
+                    }
+                }
+                matches.values.sortedWith(compareBy({ it.roundNumber }, { it.rawDateTime ?: "" }))
             }
-            matches.values.sortedWith(compareBy({ it.roundNumber }, { it.rawDateTime ?: "" }))
         }
     }
 
@@ -300,9 +358,27 @@ class CalendarRepository {
         val lon = fixture.optDouble("Longitud", 0.0)
 
         val isClosed = fixture.optBoolean("Cerrado", false)
-        val scoreLocal = fixture.optInt("ResultadoEquipoLocal", -1)
-        val scoreVisitante = fixture.optInt("ResultadoEquipoVisitante", -1)
-        val isPlayed = statusName?.contains("jugad", ignoreCase = true) == true ||
+        val scoreLocal = when {
+            fixture.has("ResultadoEquipoLocal") && !fixture.isNull("ResultadoEquipoLocal") ->
+                fixture.optInt("ResultadoEquipoLocal", -1)
+            fixture.has("GolesLocal") && !fixture.isNull("GolesLocal") ->
+                fixture.optInt("GolesLocal", -1)
+            fixture.has("TanteoLocal") && !fixture.isNull("TanteoLocal") ->
+                fixture.optInt("TanteoLocal", -1)
+            else -> -1
+        }
+        val scoreVisitante = when {
+            fixture.has("ResultadoEquipoVisitante") && !fixture.isNull("ResultadoEquipoVisitante") ->
+                fixture.optInt("ResultadoEquipoVisitante", -1)
+            fixture.has("GolesVisitante") && !fixture.isNull("GolesVisitante") ->
+                fixture.optInt("GolesVisitante", -1)
+            fixture.has("TanteoVisitante") && !fixture.isNull("TanteoVisitante") ->
+                fixture.optInt("TanteoVisitante", -1)
+            else -> -1
+        }
+        val isPlayed = statusId == 11 ||
+            statusName?.contains("disputad", ignoreCase = true) == true ||
+            statusName?.contains("jugad", ignoreCase = true) == true ||
             statusName?.contains("finaliz", ignoreCase = true) == true ||
             (isClosed && scoreLocal >= 0 && scoreVisitante >= 0) ||
             scoreLocal > 0 || scoreVisitante > 0
