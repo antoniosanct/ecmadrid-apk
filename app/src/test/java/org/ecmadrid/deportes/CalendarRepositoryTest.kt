@@ -131,6 +131,84 @@ class CalendarRepositoryTest {
     }
 
     @Test
+    fun `test parseCalendarMatch for played match with Disputado sin Incidencias`() {
+        val json = JSONObject("""
+            {
+                "Id": 8275,
+                "NumeroJornada": 1,
+                "IdGrupo": 116,
+                "FechaHora": "2026-11-14T10:00:00",
+                "IdEquipoLocal": 1029,
+                "EquipoLocal": "VALDEFUENTES \"A\"",
+                "IdEquipoVisitante": 318,
+                "EquipoVisitante": "IRLANDESAS EL SOTO",
+                "IdEstadoPartido": 11,
+                "EstadoPartido": "Disputado sin Incidencias",
+                "ResultadoEquipoLocal": 16,
+                "ResultadoEquipoVisitante": 14,
+                "Cerrado": false
+            }
+        """.trimIndent())
+
+        val match = repository.parseCalendarMatch(json)
+        assertEquals(8275, match.id)
+        assertEquals(16, match.localScore)
+        assertEquals(14, match.visitorScore)
+        assertTrue(match.isPlayed)
+        assertEquals("Disputado sin Incidencias", match.status)
+    }
+
+    @Test
+    fun `test parseCalendarMatch for 0-0 draw played match`() {
+        val json = JSONObject("""
+            {
+                "Id": 9999,
+                "NumeroJornada": 2,
+                "IdGrupo": 116,
+                "FechaHora": "2026-11-21T10:00:00",
+                "IdEquipoLocal": 1029,
+                "EquipoLocal": "VALDEFUENTES \"A\"",
+                "IdEquipoVisitante": 318,
+                "EquipoVisitante": "IRLANDESAS EL SOTO",
+                "IdEstadoPartido": 11,
+                "EstadoPartido": "Disputado sin Incidencias",
+                "ResultadoEquipoLocal": 0,
+                "ResultadoEquipoVisitante": 0
+            }
+        """.trimIndent())
+
+        val match = repository.parseCalendarMatch(json)
+        assertEquals(0, match.localScore)
+        assertEquals(0, match.visitorScore)
+        assertTrue(match.isPlayed)
+    }
+
+    @Test
+    fun `test parseCalendarMatch with GolesLocal and GolesVisitante`() {
+        val json = JSONObject("""
+            {
+                "Id": 8888,
+                "NumeroJornada": 1,
+                "IdGrupo": 10,
+                "FechaHora": "2026-11-14T10:00:00",
+                "IdEquipoLocal": 1,
+                "EquipoLocal": "EQUIPO A",
+                "IdEquipoVisitante": 2,
+                "EquipoVisitante": "EQUIPO B",
+                "IdEstadoPartido": 11,
+                "EstadoPartido": "Disputado",
+                "GolesLocal": 3,
+                "GolesVisitante": 1
+            }
+        """.trimIndent())
+
+        val match = repository.parseCalendarMatch(json)
+        assertEquals(3, match.localScore)
+        assertEquals(1, match.visitorScore)
+        assertTrue(match.isPlayed)
+    }
+
+    @Test
     fun `test parseStandings selects the fields shown in the classification tab`() {
         val response = JSONObject(
             """{"clasificacionJornada":[{"Posicion":2,"Equipo":"CORAZONISTAS","Puntos":7,"Disputados":4,"Diferencia":12}]}"""
