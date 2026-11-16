@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -72,6 +73,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,6 +87,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.ecmadrid.deportes.data.CalendarRepository
 import org.ecmadrid.deportes.data.FavoritesStore
@@ -130,9 +134,9 @@ private fun MainAppScreen() {
     val favoritesStore = remember { FavoritesStore(context.applicationContext) }
     val scope = rememberCoroutineScope()
 
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
     var favorites by remember { mutableStateOf(favoritesStore.load()) }
-    var activeCalendarTeamKey by remember {
+    var activeCalendarTeamKey by rememberSaveable {
         mutableStateOf(favorites.firstOrNull()?.let { "${it.sportId}:${it.competitionId}:${it.teamId}" })
     }
 
@@ -147,7 +151,18 @@ private fun MainAppScreen() {
     val teamCalendars = remember { mutableStateMapOf<String, List<CalendarMatch>>() }
     val calendarLoading = remember { mutableStateMapOf<String, Boolean>() }
     val calendarErrors = remember { mutableStateMapOf<String, String>() }
-    val roundFilters = remember { mutableStateMapOf<String, Int>() }
+    val roundFilters = rememberSaveable(
+        saver = mapSaver(
+            save = { it.toMap() },
+            restore = {
+                mutableStateMapOf<String, Int>().apply {
+                    it.forEach { (key, value) ->
+                        if (value is Int) put(key, value)
+                    }
+                }
+            }
+        )
+    ) { mutableStateMapOf<String, Int>() }
     val teamStandings = remember { mutableStateMapOf<String, List<TeamStanding>>() }
     val standingsLoading = remember { mutableStateMapOf<String, Boolean>() }
     val standingsErrors = remember { mutableStateMapOf<String, String>() }
@@ -265,105 +280,123 @@ private fun MainAppScreen() {
     val activeFavorite = favorites.find { "${it.sportId}:${it.competitionId}:${it.teamId}" == activeCalendarTeamKey }
         ?: favorites.firstOrNull()
 
-    Scaffold(
-        topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        if (selectedTabIndex == 1 && activeFavorite != null) {
-                            // Top bar shows the team shield on the left of the alias!
-                            val calendarTitle = activeFavorite.calendarDisplayName
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                TeamShield(
-                                    shieldUrl = activeFavorite.shieldUrl,
-                                    teamName = activeFavorite.teamName,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                                Text(
-                                    text = calendarTitle,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compactHeight = maxHeight < 500.dp
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            topBar = {
+                Column {
+                    TopAppBar(
+                        expandedHeight = if (compactHeight) 48.dp else TopAppBarDefaults.TopAppBarExpandedHeight,
+                        title = {
+                            if (selectedTabIndex == 1 && activeFavorite != null) {
+                                val calendarTitle = activeFavorite.calendarDisplayName
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    TeamShield(
+                                        shieldUrl = activeFavorite.shieldUrl,
+                                        teamName = activeFavorite.teamName,
+                                        modifier = Modifier.size(if (compactHeight) 26.dp else 32.dp)
+                                    )
+                                    Text(
+                                        text = calendarTitle,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            } else {
+                                Text("EC Madrid Deportes", fontWeight = FontWeight.Bold)
                             }
-                        } else {
-                            Text("EC Madrid Deportes", fontWeight = FontWeight.Bold)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = EcMadridRed,
-                        titleContentColor = Color.White
-                    )
-                )
-                PrimaryTabRow(selectedTabIndex = selectedTabIndex) {
-                    Tab(
-                        selected = selectedTabIndex == 0,
-                        onClick = { selectedTabIndex = 0 },
-                        text = { Text("Equipos") },
-                        icon = { Icon(Icons.Default.Groups, contentDescription = null) }
-                    )
-                    Tab(
-                        selected = selectedTabIndex == 1,
-                        onClick = { selectedTabIndex = 1 },
-                        text = {
-                            Text(
-                                if (favorites.isEmpty()) "Favoritos"
-                                else "Favoritos (${favorites.size})"
-                            )
                         },
-                        icon = { Icon(Icons.Default.Star, contentDescription = null) }
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = EcMadridRed,
+                            titleContentColor = Color.White
+                        )
                     )
+                    PrimaryTabRow(selectedTabIndex = selectedTabIndex) {
+                        Tab(
+                            selected = selectedTabIndex == 0,
+                            onClick = { selectedTabIndex = 0 },
+                            text = {
+                                Text(
+                                    "Equipos",
+                                    style = if (compactHeight) MaterialTheme.typography.labelSmall
+                                    else MaterialTheme.typography.labelLarge
+                                )
+                            },
+                            icon = if (compactHeight) null else {
+                                { Icon(Icons.Default.Groups, contentDescription = null) }
+                            }
+                        )
+                        Tab(
+                            selected = selectedTabIndex == 1,
+                            onClick = { selectedTabIndex = 1 },
+                            text = {
+                                Text(
+                                    if (favorites.isEmpty()) "Favoritos"
+                                    else "Favoritos (${favorites.size})",
+                                    style = if (compactHeight) MaterialTheme.typography.labelSmall
+                                    else MaterialTheme.typography.labelLarge
+                                )
+                            },
+                            icon = if (compactHeight) null else {
+                                { Icon(Icons.Default.Star, contentDescription = null) }
+                            }
+                        )
+                    }
                 }
             }
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            if (selectedTabIndex == 0) {
-                TeamsSelectionTab(
-                    repository = repository,
-                    favorites = favorites,
-                    onAddFavorite = ::addFavoriteWithAlias,
-                    onUpdateAlias = ::updateFavoriteAlias,
-                    onRemoveFavorite = ::removeFavorite,
-                    onGoToCalendar = { fav ->
-                        activeCalendarTeamKey = "${fav.sportId}:${fav.competitionId}:${fav.teamId}"
-                        selectedTabIndex = 1
-                    }
-                )
-            } else {
-                CalendarsTab(
-                    favorites = favorites,
-                    activeKey = activeCalendarTeamKey,
-                    teamCalendars = teamCalendars,
-                    calendarLoading = calendarLoading,
-                    calendarErrors = calendarErrors,
-                    roundFilters = roundFilters,
-                    teamStandings = teamStandings,
-                    standingsLoading = standingsLoading,
-                    standingsErrors = standingsErrors,
-                    onRefreshStandings = ::refreshStandings,
-                    groupResults = groupResults,
-                    groupResultsLoading = groupResultsLoading,
-                    groupResultsErrors = groupResultsErrors,
-                    onRefreshGroupResults = ::refreshGroupResults,
-                    onSelectTeam = { key ->
-                        activeCalendarTeamKey = key
-                        favorites.find { "${it.sportId}:${it.competitionId}:${it.teamId}" == key }?.let {
-                            refreshCalendar(it, force = false)
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                if (selectedTabIndex == 0) {
+                    TeamsSelectionTab(
+                        repository = repository,
+                        favorites = favorites,
+                        compactHeight = compactHeight,
+                        onAddFavorite = ::addFavoriteWithAlias,
+                        onUpdateAlias = ::updateFavoriteAlias,
+                        onRemoveFavorite = ::removeFavorite,
+                        onGoToCalendar = { fav ->
+                            activeCalendarTeamKey = "${fav.sportId}:${fav.competitionId}:${fav.teamId}"
+                            selectedTabIndex = 1
                         }
-                    },
-                    onRefreshCalendar = { fav -> refreshCalendar(fav, force = true) },
-                    onUpdateAlias = ::updateFavoriteAlias,
-                    onRemoveFavorite = ::removeFavorite,
-                    onGoToSelection = { selectedTabIndex = 0 }
-                )
+                    )
+                } else {
+                    CalendarsTab(
+                        favorites = favorites,
+                        activeKey = activeCalendarTeamKey,
+                        compactHeight = compactHeight,
+                        teamCalendars = teamCalendars,
+                        calendarLoading = calendarLoading,
+                        calendarErrors = calendarErrors,
+                        roundFilters = roundFilters,
+                        teamStandings = teamStandings,
+                        standingsLoading = standingsLoading,
+                        standingsErrors = standingsErrors,
+                        onRefreshStandings = ::refreshStandings,
+                        groupResults = groupResults,
+                        groupResultsLoading = groupResultsLoading,
+                        groupResultsErrors = groupResultsErrors,
+                        onRefreshGroupResults = ::refreshGroupResults,
+                        onSelectTeam = { key ->
+                            activeCalendarTeamKey = key
+                            favorites.find { "${it.sportId}:${it.competitionId}:${it.teamId}" == key }?.let {
+                                refreshCalendar(it, force = false)
+                            }
+                        },
+                        onRefreshCalendar = { fav -> refreshCalendar(fav, force = true) },
+                        onUpdateAlias = ::updateFavoriteAlias,
+                        onRemoveFavorite = ::removeFavorite,
+                        onGoToSelection = { selectedTabIndex = 0 }
+                    )
+                }
             }
         }
     }
@@ -373,22 +406,24 @@ private fun MainAppScreen() {
 private fun TeamsSelectionTab(
     repository: CalendarRepository,
     favorites: List<Favorite>,
+    compactHeight: Boolean,
     onAddFavorite: (Team, Sport, Competition, String?) -> Unit,
     onUpdateAlias: (Favorite, String?) -> Unit,
     onRemoveFavorite: (Favorite) -> Unit,
     onGoToCalendar: (Favorite) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
-    var selectedSport by remember { mutableStateOf<Sport?>(null) }
-    var selectedCompetition by remember { mutableStateOf<Competition?>(null) }
+    var selectedSportId by rememberSaveable { mutableIntStateOf(-1) }
+    val selectedSport = sports.find { it.id == selectedSportId }
+    var selectedCompetitionId by rememberSaveable { mutableIntStateOf(-1) }
     var competitions by remember { mutableStateOf<List<Competition>>(emptyList()) }
+    val selectedCompetition = competitions.find { it.id == selectedCompetitionId }
     var teams by remember { mutableStateOf<List<Team>>(emptyList()) }
     var loadingCompetitions by remember { mutableStateOf(false) }
     var loadingTeams by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    var searchQuery by remember { mutableStateOf("") }
-    var currentPage by remember { mutableIntStateOf(1) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var currentPage by rememberSaveable { mutableIntStateOf(1) }
     val pageSize = 8
 
     // State for alias dialog when adding a team
@@ -404,44 +439,58 @@ private fun TeamsSelectionTab(
         maxOf(1, (filteredTeams.size + pageSize - 1) / pageSize)
     }
 
-    LaunchedEffect(searchQuery, selectedCompetition) {
-        currentPage = 1
-    }
-
     fun chooseSport(sport: Sport) {
-        selectedSport = sport
-        selectedCompetition = null
+        if (selectedSportId == sport.id) return
+        selectedSportId = sport.id
+        selectedCompetitionId = -1
         competitions = emptyList()
         teams = emptyList()
         errorMessage = null
-        loadingCompetitions = true
-        scope.launch {
-            try {
-                competitions = repository.competitions(sport)
-                if (competitions.isEmpty()) errorMessage = "No hay competiciones activas para este deporte."
-            } catch (e: Exception) {
-                errorMessage = e.message ?: "No se pudieron cargar las competiciones."
-            } finally {
-                loadingCompetitions = false
-            }
-        }
+        currentPage = 1
     }
 
     fun chooseCompetition(competition: Competition) {
-        val sport = selectedSport ?: return
-        selectedCompetition = competition
+        if (selectedCompetitionId == competition.id) return
+        selectedCompetitionId = competition.id
         teams = emptyList()
         errorMessage = null
+        currentPage = 1
+    }
+
+    LaunchedEffect(selectedSportId) {
+        val sport = selectedSport
+        if (sport == null) {
+            competitions = emptyList()
+            return@LaunchedEffect
+        }
+
+        loadingCompetitions = true
+        try {
+            competitions = repository.competitions(sport)
+            if (competitions.isEmpty()) errorMessage = "No hay competiciones activas para este deporte."
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            errorMessage = e.message ?: "No se pudieron cargar las competiciones."
+        } finally {
+            loadingCompetitions = false
+        }
+    }
+
+    LaunchedEffect(selectedSportId, selectedCompetitionId, competitions) {
+        val sport = selectedSport ?: return@LaunchedEffect
+        val competition = selectedCompetition ?: return@LaunchedEffect
+
         loadingTeams = true
-        scope.launch {
-            try {
-                teams = repository.teams(sport, competition)
-                if (teams.isEmpty()) errorMessage = "No hay equipos en las jornadas de esta competición."
-            } catch (e: Exception) {
-                errorMessage = e.message ?: "No se pudieron cargar los equipos."
-            } finally {
-                loadingTeams = false
-            }
+        try {
+            teams = repository.teams(sport, competition)
+            if (teams.isEmpty()) errorMessage = "No hay equipos en las jornadas de esta competición."
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            errorMessage = e.message ?: "No se pudieron cargar los equipos."
+        } finally {
+            loadingTeams = false
         }
     }
 
@@ -482,18 +531,20 @@ private fun TeamsSelectionTab(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else 12.dp)
     ) {
         item {
-            Column(modifier = Modifier.padding(top = 16.dp)) {
+            Column(modifier = Modifier.padding(top = if (compactHeight) 4.dp else 16.dp)) {
                 Text(
                     text = "Selección de Equipos",
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = if (compactHeight) MaterialTheme.typography.titleMedium
+                    else MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = "Elige deporte y competición para ver y seleccionar equipos. Al añadir un equipo podrás asignarle un alias personalizado.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = if (compactHeight) MaterialTheme.typography.bodySmall
+                    else MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -561,7 +612,10 @@ private fun TeamsSelectionTab(
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedTextField(
                     value = searchQuery,
-                    onValueChange = { searchQuery = it },
+                    onValueChange = {
+                        searchQuery = it
+                        currentPage = 1
+                    },
                     label = { Text("Buscar equipo") },
                     placeholder = { Text("Ej. Corazonistas, Virgen...") },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
@@ -601,7 +655,8 @@ private fun TeamsSelectionTab(
 
                         Text(
                             text = "Pág. $currentPage de $totalPages (${filteredTeams.size} equipos)",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = if (compactHeight) MaterialTheme.typography.bodySmall
+                            else MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold
                         )
 
@@ -722,6 +777,7 @@ private fun TeamsSelectionTab(
 private fun CalendarsTab(
     favorites: List<Favorite>,
     activeKey: String?,
+    compactHeight: Boolean,
     teamCalendars: Map<String, List<CalendarMatch>>,
     calendarLoading: Map<String, Boolean>,
     calendarErrors: Map<String, String>,
@@ -813,7 +869,7 @@ private fun CalendarsTab(
     val isLoading = calendarLoading[currentKey] == true
     val error = calendarErrors[currentKey]
     val selectedRound = roundFilters[currentKey]
-    var selectedTeamPage by remember(currentKey) { mutableIntStateOf(0) }
+    var selectedTeamPage by rememberSaveable(currentKey) { mutableIntStateOf(0) }
 
     val availableRounds = remember(matches) {
         matches.map { it.roundNumber }.distinct().sorted()
@@ -866,17 +922,19 @@ private fun CalendarsTab(
                     text = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(vertical = 4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(if (compactHeight) 4.dp else 8.dp),
+                            modifier = Modifier.padding(vertical = if (compactHeight) 0.dp else 4.dp)
                         ) {
                             // Team shield on the left of the alias in top bar tabs
                             TeamShield(
                                 shieldUrl = fav.shieldUrl,
                                 teamName = fav.teamName,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(if (compactHeight) 20.dp else 24.dp)
                             )
                             Text(
                                 text = calendarTitle,
+                                style = if (compactHeight) MaterialTheme.typography.labelSmall
+                                else MaterialTheme.typography.bodyMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
@@ -890,7 +948,10 @@ private fun CalendarsTab(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(
+                    horizontal = 16.dp,
+                    vertical = if (compactHeight) 4.dp else 12.dp
+                ),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant
             )
@@ -898,19 +959,20 @@ private fun CalendarsTab(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(14.dp),
+                    .padding(if (compactHeight) 8.dp else 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TeamShield(
                     shieldUrl = currentFavorite.shieldUrl,
                     teamName = currentFavorite.teamName,
-                    modifier = Modifier.size(54.dp)
+                    modifier = Modifier.size(if (compactHeight) 38.dp else 54.dp)
                 )
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(if (compactHeight) 8.dp else 14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = currentFavorite.teamName,
-                        style = MaterialTheme.typography.titleLarge,
+                        style = if (compactHeight) MaterialTheme.typography.titleMedium
+                        else MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
                     Row(
@@ -937,11 +999,13 @@ private fun CalendarsTab(
                             )
                         }
                     }
-                    Text(
-                        text = "${currentFavorite.sportName} · ${currentFavorite.competitionName}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (!compactHeight) {
+                        Text(
+                            text = "${currentFavorite.sportName} · ${currentFavorite.competitionName}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 IconButton(onClick = { onRefreshCalendar(currentFavorite) }) {
                     Icon(Icons.Default.Refresh, contentDescription = "Actualizar calendario")
@@ -960,20 +1024,44 @@ private fun CalendarsTab(
             Tab(
                 selected = selectedTeamPage == 0,
                 onClick = { selectedTeamPage = 0 },
-                text = { Text("Calendario") },
-                icon = { Icon(Icons.Default.CalendarMonth, contentDescription = null) }
+                text = {
+                    Text(
+                        "Calendario",
+                        style = if (compactHeight) MaterialTheme.typography.labelSmall
+                        else MaterialTheme.typography.labelLarge
+                    )
+                },
+                icon = if (compactHeight) null else {
+                    { Icon(Icons.Default.CalendarMonth, contentDescription = null) }
+                }
             )
             Tab(
                 selected = selectedTeamPage == 1,
                 onClick = { selectedTeamPage = 1 },
-                text = { Text("Resultados") },
-                icon = { Icon(Icons.Default.CheckCircle, contentDescription = null) }
+                text = {
+                    Text(
+                        "Resultados",
+                        style = if (compactHeight) MaterialTheme.typography.labelSmall
+                        else MaterialTheme.typography.labelLarge
+                    )
+                },
+                icon = if (compactHeight) null else {
+                    { Icon(Icons.Default.CheckCircle, contentDescription = null) }
+                }
             )
             Tab(
                 selected = selectedTeamPage == 2,
                 onClick = { selectedTeamPage = 2 },
-                text = { Text("Clasificación") },
-                icon = { Icon(Icons.Default.Groups, contentDescription = null) }
+                text = {
+                    Text(
+                        "Clasificación",
+                        style = if (compactHeight) MaterialTheme.typography.labelSmall
+                        else MaterialTheme.typography.labelLarge
+                    )
+                },
+                icon = if (compactHeight) null else {
+                    { Icon(Icons.Default.Groups, contentDescription = null) }
+                }
             )
         }
 
@@ -1062,7 +1150,11 @@ private fun CalendarsTab(
                     }
                 } else {
                     items(displayedMatches, key = { it.id }) { match ->
-                        MatchCard(match = match, activeFavorite = currentFavorite)
+                        MatchCard(
+                            match = match,
+                            activeFavorite = currentFavorite,
+                            compactHeight = compactHeight
+                        )
                     }
                 }
             }
@@ -1134,7 +1226,8 @@ private fun CalendarsTab(
                                 GroupResultsCard(
                                     roundNumber = roundNumber,
                                     matches = roundMatches,
-                                    activeFavorite = currentFavorite
+                                    activeFavorite = currentFavorite,
+                                    compactHeight = compactHeight
                                 )
                             }
                         }
@@ -1201,7 +1294,11 @@ private fun CalendarsTab(
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 StandingTableHeader()
                                 standings.forEach { standing ->
-                                    StandingTableRow(standing)
+                                    val isFavorite = isMatchingTeamName(standing.teamName, currentFavorite.teamName)
+                                    StandingTableRow(
+                                        standing = standing,
+                                        isFavorite = isFavorite
+                                    )
                                 }
                             }
                         }
@@ -1214,12 +1311,20 @@ private fun CalendarsTab(
     }
 }
 
+private fun isMatchingTeamName(name1: String, name2: String): Boolean {
+    val clean1 = name1.replace("\"", "").replace("'", "").trim()
+    val clean2 = name2.replace("\"", "").replace("'", "").trim()
+    return clean1.equals(clean2, ignoreCase = true) ||
+        clean1.contains(clean2, ignoreCase = true) ||
+        clean2.contains(clean1, ignoreCase = true)
+}
+
 @Composable
 private fun StandingTableHeader() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 12.dp),
+            .padding(vertical = 12.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         StandingColumn("Pos.", 0.6f, true, true)
@@ -1231,18 +1336,50 @@ private fun StandingTableHeader() {
 }
 
 @Composable
-private fun StandingTableRow(standing: TeamStanding) {
+private fun StandingTableRow(
+    standing: TeamStanding,
+    isFavorite: Boolean
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 10.dp),
+            .clip(RoundedCornerShape(6.dp))
+            .then(
+                if (isFavorite) Modifier.background(EcMadridRed.copy(alpha = 0.08f))
+                else Modifier
+            )
+            .padding(vertical = 10.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        StandingColumn(standing.position.toString(), 0.6f, centered = true)
-        StandingColumn(standing.teamName, 1.3f)
-        StandingColumn(standing.points.toString(), 0.8f, centered = true)
-        StandingColumn(standing.matchesPlayed.toString(), 0.65f, centered = true)
-        StandingColumn(standing.goalDifference.toString(), 1.05f, centered = true)
+        StandingColumn(
+            text = standing.position.toString(),
+            weight = 0.6f,
+            centered = true,
+            isHighlighted = isFavorite
+        )
+        StandingColumn(
+            text = standing.teamName,
+            weight = 1.3f,
+            isHighlighted = isFavorite
+        )
+        StandingColumn(
+            text = standing.points.toString(),
+            weight = 0.8f,
+            centered = true,
+            isHighlighted = isFavorite
+        )
+        StandingColumn(
+            text = standing.matchesPlayed.toString(),
+            weight = 0.65f,
+            centered = true,
+            isHighlighted = isFavorite
+        )
+        StandingColumn(
+            text = standing.goalDifference.toString(),
+            weight = 1.05f,
+            centered = true,
+            isHighlighted = isFavorite
+        )
     }
 }
 
@@ -1250,7 +1387,8 @@ private fun StandingTableRow(standing: TeamStanding) {
 private fun GroupResultsCard(
     roundNumber: Int,
     matches: List<CalendarMatch>,
-    activeFavorite: Favorite
+    activeFavorite: Favorite,
+    compactHeight: Boolean
 ) {
     val date = matches.firstOrNull()?.date.orEmpty()
     Card(
@@ -1262,12 +1400,13 @@ private fun GroupResultsCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(if (compactHeight) 8.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else 12.dp)
         ) {
             Text(
                 text = "JORNADA $roundNumber${if (date.isNotBlank()) " · $date" else ""}",
-                style = MaterialTheme.typography.labelLarge,
+                style = if (compactHeight) MaterialTheme.typography.labelSmall
+                else MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -1278,18 +1417,24 @@ private fun GroupResultsCard(
                     else -> null
                 }
                 if (!restingTeam.isNullOrBlank()) {
+                    val isFavoriteResting = match.localTeamId == activeFavorite.teamId ||
+                        match.visitorTeamId == activeFavorite.teamId ||
+                        isMatchingTeamName(restingTeam, activeFavorite.teamName)
                     Text(
                         text = "$restingTeam (D)",
                         modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = if (
-                            match.localTeamId == activeFavorite.teamId ||
-                            match.visitorTeamId == activeFavorite.teamId
-                        ) FontWeight.Bold else FontWeight.Normal,
+                        style = if (compactHeight) MaterialTheme.typography.bodySmall
+                        else MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (isFavoriteResting) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isFavoriteResting) EcMadridRed else MaterialTheme.colorScheme.onSurface,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 } else {
-                    GroupResultMatchRow(match)
+                    GroupResultMatchRow(
+                        match = match,
+                        activeFavorite = activeFavorite,
+                        compactHeight = compactHeight
+                    )
                 }
             }
         }
@@ -1297,30 +1442,63 @@ private fun GroupResultsCard(
 }
 
 @Composable
-private fun GroupResultMatchRow(match: CalendarMatch) {
+private fun GroupResultMatchRow(
+    match: CalendarMatch,
+    activeFavorite: Favorite,
+    compactHeight: Boolean
+) {
+    val isLocalFavorite = match.localTeamId == activeFavorite.teamId ||
+        isMatchingTeamName(match.localTeamName, activeFavorite.teamName)
+    val isVisitorFavorite = match.visitorTeamId == activeFavorite.teamId ||
+        isMatchingTeamName(match.visitorTeamName, activeFavorite.teamName)
+    val hasFavorite = isLocalFavorite || isVisitorFavorite
+
+    val scoreText = if (match.isPlayed && match.localScore != null && match.visitorScore != null) {
+        "${match.localScore} - ${match.visitorScore}"
+    } else if (match.localScore != null && match.visitorScore != null && (match.localScore > 0 || match.visitorScore > 0)) {
+        "${match.localScore} - ${match.visitorScore}"
+    } else {
+        "vs"
+    }
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .then(
+                if (hasFavorite) Modifier.background(EcMadridRed.copy(alpha = 0.08f))
+                else Modifier
+            )
+            .padding(
+                horizontal = if (compactHeight) 4.dp else 8.dp,
+                vertical = if (compactHeight) 2.dp else 6.dp
+            ),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = match.localTeamName,
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (isLocalFavorite) FontWeight.Bold else FontWeight.Normal,
+            color = if (isLocalFavorite) EcMadridRed else MaterialTheme.colorScheme.onSurface,
             textAlign = androidx.compose.ui.text.style.TextAlign.End,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
         Text(
-            text = "${match.localScore?.toString().orEmpty()} - ${match.visitorScore?.toString().orEmpty()}",
+            text = scoreText,
             modifier = Modifier.padding(horizontal = 10.dp),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
+            color = if (hasFavorite) EcMadridRed else MaterialTheme.colorScheme.onSurface,
             maxLines = 1
         )
         Text(
             text = match.visitorTeamName,
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (isVisitorFavorite) FontWeight.Bold else FontWeight.Normal,
+            color = if (isVisitorFavorite) EcMadridRed else MaterialTheme.colorScheme.onSurface,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
@@ -1332,14 +1510,19 @@ private fun RowScope.StandingColumn(
     text: String,
     weight: Float,
     isHeader: Boolean = false,
-    centered: Boolean = false
+    centered: Boolean = false,
+    isHighlighted: Boolean = false
 ) {
     Text(
         text = text,
         modifier = Modifier.weight(weight),
         style = if (isHeader) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
-        fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
-        color = if (isHeader) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        fontWeight = if (isHeader || isHighlighted) FontWeight.Bold else FontWeight.Normal,
+        color = when {
+            isHeader -> MaterialTheme.colorScheme.primary
+            isHighlighted -> EcMadridRed
+            else -> MaterialTheme.colorScheme.onSurface
+        },
         textAlign = if (centered) androidx.compose.ui.text.style.TextAlign.Center else null,
         maxLines = if (isHeader) 2 else 3,
         overflow = TextOverflow.Ellipsis
@@ -1347,7 +1530,11 @@ private fun RowScope.StandingColumn(
 }
 
 @Composable
-private fun MatchCard(match: CalendarMatch, activeFavorite: Favorite) {
+private fun MatchCard(
+    match: CalendarMatch,
+    activeFavorite: Favorite,
+    compactHeight: Boolean
+) {
     val context = LocalContext.current
     val activeTeamId = activeFavorite.teamId
 
@@ -1362,8 +1549,8 @@ private fun MatchCard(match: CalendarMatch, activeFavorite: Favorite) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(if (compactHeight) 8.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 4.dp else 10.dp)
         ) {
             // Header: Round + Date & Time + Status
             Row(
@@ -1377,7 +1564,8 @@ private fun MatchCard(match: CalendarMatch, activeFavorite: Favorite) {
                         Text(
                             text = "JORNADA ${match.roundNumber}",
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
+                            style = if (compactHeight) MaterialTheme.typography.labelSmall
+                            else MaterialTheme.typography.labelMedium
                         )
                     }
                 )
@@ -1401,50 +1589,85 @@ private fun MatchCard(match: CalendarMatch, activeFavorite: Favorite) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 6.dp),
+                        .padding(vertical = if (compactHeight) 2.dp else 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val shield = if (match.localTeamId == activeTeamId) match.localShieldUrl else match.visitorShieldUrl
-                    val restingTeamName = if (match.localTeamId == activeTeamId) match.localTeamName else match.visitorTeamName
+                    val isLocalCurrent = match.localTeamId == activeTeamId ||
+                        isMatchingTeamName(match.localTeamName, activeFavorite.teamName)
+                    val isVisitorCurrent = match.visitorTeamId == activeTeamId ||
+                        isMatchingTeamName(match.visitorTeamName, activeFavorite.teamName)
+                    val isFavoriteResting = isLocalCurrent || isVisitorCurrent
+                    val shield = if (isLocalCurrent) match.localShieldUrl else match.visitorShieldUrl
+                    val restingTeamName = if (isLocalCurrent) match.localTeamName else match.visitorTeamName
 
                     TeamShield(
                         shieldUrl = shield,
                         teamName = restingTeamName,
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(if (compactHeight) 30.dp else 38.dp)
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(if (compactHeight) 8.dp else 12.dp))
                     Column {
                         Text(
                             text = restingTeamName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            style = if (compactHeight) MaterialTheme.typography.bodyMedium
+                            else MaterialTheme.typography.titleMedium,
+                            fontWeight = if (isFavoriteResting) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isFavoriteResting) EcMadridRed else MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = "Descansa en esta jornada",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = if (compactHeight) MaterialTheme.typography.bodySmall
+                            else MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.secondary
                         )
                     }
                 }
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Local Team - always official team name
-                    val isLocalCurrent = match.localTeamId == activeTeamId
-                    TeamMatchRow(
-                        name = match.localTeamName,
-                        shieldUrl = match.localShieldUrl,
-                        isCurrentTeam = isLocalCurrent,
-                        score = match.localScore
-                    )
+                val isLocalCurrent = match.localTeamId == activeTeamId ||
+                    isMatchingTeamName(match.localTeamName, activeFavorite.teamName)
+                val isVisitorCurrent = match.visitorTeamId == activeTeamId ||
+                    isMatchingTeamName(match.visitorTeamName, activeFavorite.teamName)
 
-                    // Visitor Team - always official team name
-                    val isVisitorCurrent = match.visitorTeamId == activeTeamId
-                    TeamMatchRow(
-                        name = match.visitorTeamName,
-                        shieldUrl = match.visitorShieldUrl,
-                        isCurrentTeam = isVisitorCurrent,
-                        score = match.visitorScore
-                    )
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    if (maxWidth >= 600.dp) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            TeamMatchRow(
+                                name = match.localTeamName,
+                                shieldUrl = match.localShieldUrl,
+                                isCurrentTeam = isLocalCurrent,
+                                score = match.localScore,
+                                compactHeight = compactHeight,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TeamMatchRow(
+                                name = match.visitorTeamName,
+                                shieldUrl = match.visitorShieldUrl,
+                                isCurrentTeam = isVisitorCurrent,
+                                score = match.visitorScore,
+                                compactHeight = compactHeight,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    } else {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 4.dp else 8.dp)
+                        ) {
+                            TeamMatchRow(
+                                name = match.localTeamName,
+                                shieldUrl = match.localShieldUrl,
+                                isCurrentTeam = isLocalCurrent,
+                                score = match.localScore,
+                                compactHeight = compactHeight
+                            )
+                            TeamMatchRow(
+                                name = match.visitorTeamName,
+                                shieldUrl = match.visitorShieldUrl,
+                                isCurrentTeam = isVisitorCurrent,
+                                score = match.visitorScore,
+                                compactHeight = compactHeight
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1494,26 +1717,29 @@ private fun TeamMatchRow(
     name: String,
     shieldUrl: String?,
     isCurrentTeam: Boolean,
-    score: Int?
+    score: Int?,
+    compactHeight: Boolean,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Shield image to the left of the team name / alias
         TeamShield(
             shieldUrl = shieldUrl,
             teamName = name,
-            modifier = Modifier.size(36.dp)
+            modifier = Modifier.size(if (compactHeight) 28.dp else 36.dp)
         )
 
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(if (compactHeight) 6.dp else 10.dp))
 
         Text(
             text = name,
-            style = MaterialTheme.typography.bodyLarge,
+            style = if (compactHeight) MaterialTheme.typography.bodyMedium
+            else MaterialTheme.typography.bodyLarge,
             fontWeight = if (isCurrentTeam) FontWeight.Bold else FontWeight.Normal,
-            color = if (isCurrentTeam) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            color = if (isCurrentTeam) EcMadridRed else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f)
         )
 
@@ -1522,6 +1748,7 @@ private fun TeamMatchRow(
                 text = score.toString(),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
+                color = if (isCurrentTeam) EcMadridRed else MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(horizontal = 8.dp)
             )
         }
@@ -1536,7 +1763,7 @@ private fun AliasDialog(
     onDismiss: () -> Unit,
     onConfirm: (String?) -> Unit
 ) {
-    var aliasText by remember { mutableStateOf(initialAlias.orEmpty()) }
+    var aliasText by rememberSaveable { mutableStateOf(initialAlias.orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1621,7 +1848,9 @@ private fun StatusBadge(status: String, isResting: Boolean) {
             bgColor = Color(0xFFF8D7DA)
             textColor = Color(0xFF721C24)
         }
-        status.contains("Jugado", ignoreCase = true) || status.contains("Finalizado", ignoreCase = true) -> {
+        status.contains("Jugado", ignoreCase = true) ||
+            status.contains("Finalizado", ignoreCase = true) ||
+            status.contains("Disputado", ignoreCase = true) -> {
             bgColor = Color(0xFFD4EDDA)
             textColor = Color(0xFF155724)
         }
